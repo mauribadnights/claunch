@@ -21,7 +21,8 @@ const COLORS = {
   orange: `${ESC}[38;5;208m`,
 };
 
-// Animation frames: idle + 3 wave frames (right arm lifts and waves)
+// Animation frames: idle + wave frames (hand extends above arm, stays connected)
+// ▖ (lower-left pixel) on row 1 connects to ▘ (upper-left pixel) on row 2
 const LOGO_IDLE = [
   ' ▐▛███▜▌ ',
   '▝▜█████▛▘',
@@ -29,19 +30,19 @@ const LOGO_IDLE = [
 ];
 
 const LOGO_WAVE = [
-  [  // frame 0: arm lifts off
-    ' ▐▛███▜▌▘',
-    '▝▜█████▛ ',
+  [  // frame 0: hand extends up (▖ connects to ▘ below)
+    ' ▐▛███▜▌▖',
+    '▝▜█████▛▘',
     '  ▘▘ ▝▝  ',
   ],
-  [  // frame 1: arm up
-    ' ▐▛███▜▌▝',
-    '▝▜█████▛ ',
+  [  // frame 1: hand waves open (▄ = both lower pixels, still connects)
+    ' ▐▛███▜▌▄',
+    '▝▜█████▛▘',
     '  ▘▘ ▝▝  ',
   ],
-  [  // frame 2: arm tilt
-    ' ▐▛███▜▌▘',
-    '▝▜█████▛ ',
+  [  // frame 2: hand back to point
+    ' ▐▛███▜▌▖',
+    '▝▜█████▛▘',
     '  ▘▘ ▝▝  ',
   ],
 ];
