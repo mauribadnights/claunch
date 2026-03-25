@@ -4,8 +4,12 @@ import { loadConfig, saveConfig, expandHome, getConfigPath } from './config.js';
 import { discoverAgents, resolveAgent } from './discovery.js';
 import { launch } from './launcher.js';
 import { generateZshCompletions, generateBashCompletions, generateFishCompletions, listProjects, listAgents } from './completions.js';
-import { existsSync } from 'fs';
-import { resolve } from 'path';
+import { existsSync, readFileSync } from 'fs';
+import { resolve, dirname, join } from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const VERSION = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf8')).version;
 
 const args = process.argv.slice(2);
 
@@ -63,6 +67,9 @@ switch (command) {
   case 'completions':
     cmdCompletions(args[1]);
     break;
+  case 'update':
+    cmdUpdate();
+    break;
   case 'help':
   case '--help':
   case '-h':
@@ -70,7 +77,7 @@ switch (command) {
     break;
   case '--version':
   case '-v':
-    console.log('0.1.0');
+    console.log(VERSION);
     break;
   default:
     // Treat as: claunch <project> [agent] [extra-args...]
@@ -211,6 +218,27 @@ function cmdScan(scanArgs) {
   });
 }
 
+function cmdUpdate() {
+  import('child_process').then(({ execSync }) => {
+    const pkg = '@mauribadnights/claunch';
+    console.log(`Checking for updates...`);
+    try {
+      const latest = execSync(`npm view ${pkg} version`, { encoding: 'utf8' }).trim();
+      const current = VERSION;
+      if (latest === current) {
+        console.log(`Already on the latest version (${current})`);
+        return;
+      }
+      console.log(`Updating ${current} -> ${latest}`);
+      execSync(`npm install -g ${pkg}@latest`, { stdio: 'inherit' });
+      console.log(`Updated to ${latest}`);
+    } catch (err) {
+      console.error('Update failed:', err.message);
+      process.exit(1);
+    }
+  });
+}
+
 function cmdCompletions(shell) {
   switch (shell) {
     case 'zsh':
@@ -300,6 +328,7 @@ Commands:
   scan [root-dir]                      Auto-discover projects (uses scan_roots if no arg)
   list                                 List all projects and agents (non-interactive)
   init                                 Create default config
+  update                               Update claunch to the latest version
   completions <zsh|bash|fish>          Print shell completions
 
 Config: ${getConfigPath()}

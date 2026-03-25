@@ -92,6 +92,7 @@ claunch remove <name>                Unregister a project
 claunch scan [root-dir]              Auto-discover projects
 claunch list                         List all projects (non-interactive)
 claunch init                         Create default config
+claunch update                       Update claunch to the latest version
 claunch completions <zsh|bash|fish>  Print shell completions
 ```
 
