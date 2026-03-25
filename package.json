@@ -1,0 +1,34 @@
+{
+  "name": "@mauribadnights/claunch",
+  "version": "0.1.0",
+  "description": "Universal agent launcher for Claude Code — manage project-specific agents from anywhere",
+  "type": "module",
+  "bin": {
+    "claunch": "./src/cli.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "src/"
+  ],
+  "scripts": {
+    "test": "node --test src/*.test.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mauribadnights/claunch"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "agents",
+    "launcher",
+    "cli"
+  ],
+  "author": "Mauricio Buendia <mauribadnights>",
+  "license": "MIT",
+  "dependencies": {
+    "yaml": "^2.7.0"
+  }
+}
