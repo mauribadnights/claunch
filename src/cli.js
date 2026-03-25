@@ -68,6 +68,7 @@ switch (command) {
     cmdCompletions(args[1]);
     break;
   case 'update':
+  case 'upgrade':
     cmdUpdate();
     break;
   case 'help':

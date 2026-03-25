@@ -1,6 +1,6 @@
 {
   "name": "@mauribadnights/claunch",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "description": "Universal agent launcher for Claude Code — manage project-specific agents from anywhere",
   "type": "module",
   "bin": {
