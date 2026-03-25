@@ -21,33 +21,42 @@ const COLORS = {
   orange: `${ESC}[38;5;208m`,
 };
 
-// Animation frames: idle + wave frames (hand extends above arm, stays connected)
-// ▖ (lower-left pixel) on row 1 connects to ▘ (upper-left pixel) on row 2
-const LOGO_IDLE = [
-  ' ▐▛███▜▌ ',
-  '▝▜█████▛▘',
-  '  ▘▘ ▝▝  ',
-];
-
-const LOGO_WAVE = [
-  [  // frame 0: hand extends up (▖ connects to ▘ below)
-    ' ▐▛███▜▌▖',
-    '▝▜█████▛▘',
-    '  ▘▘ ▝▝  ',
-  ],
-  [  // frame 1: hand waves open (▄ = both lower pixels, still connects)
-    ' ▐▛███▜▌▄',
-    '▝▜█████▛▘',
-    '  ▘▘ ▝▝  ',
-  ],
-  [  // frame 2: hand back to point
-    ' ▐▛███▜▌▖',
-    '▝▜█████▛▘',
-    '  ▘▘ ▝▝  ',
-  ],
-];
-
 const GREETINGS = ['hi!', 'hey!', 'ready!', "let's go!", 'pick me!', 'hello!', 'yo!'];
+
+// Eye states: ███ (closed), █▄█ (center), ▄██ (left), ██▄ (right)
+const EYE_FACES = ['███', '█▄█', '▄██', '██▄'];
+const EYE_CLOSED = 0, EYE_CENTER = 1, EYE_LEFT = 2, EYE_RIGHT = 3;
+
+// Arm characters: ▘ (in/left pixel), ▝ (out/right pixel)
+const ARM_IN = '▘', ARM_OUT = '▝';
+
+// Wave overlay on head row: ▖ (point, connects to arm below), ▄ (open hand)
+const WAVE_TOP = [' ', '▖', '▄', '▖', ' ']; // indexed by wave frame
+const WAVE_ARM = [ARM_IN, ARM_IN, ARM_OUT, ARM_OUT, ARM_IN]; // arm during wave
+
+// Prime intervals (ms) — never align the same way twice
+const P_EYE = 3001;       // eye glance cycle
+const P_ARM = 2003;       // arm idle sway
+const P_GREET_MIN = 7013; // greeting minimum delay
+const P_GREET_MAX = 13007; // greeting maximum delay
+
+/**
+ * Compose logo lines from independent animation states.
+ * @param {number} eyeState - 0=closed, 1=center, 2=left, 3=right
+ * @param {boolean} armOut - true=▝, false=▘
+ * @param {number} waveFrame - -1=idle, 0-4=wave sequence
+ */
+function buildLogo(eyeState, armOut, waveFrame) {
+  const face = EYE_FACES[eyeState];
+  const isWaving = waveFrame >= 0;
+  const headEnd = isWaving ? WAVE_TOP[waveFrame] : ' ';
+  const arm = isWaving ? WAVE_ARM[waveFrame] : (armOut ? ARM_OUT : ARM_IN);
+  return [
+    ` ▐▛${face}▜▌${headEnd}`,
+    `▝▜█████▛${arm}`,
+    '  ▘▘ ▝▝  ',
+  ];
+}
 
 /**
  * Split-panel fuzzy selector with animated Claude logo.
@@ -90,11 +99,18 @@ function splitPanelSelect({ agentItems, dirItemsFn, maxVisible = 13, agentFrecen
     let dirCursor = 0;
     let dirFiltered = [];
 
-    // Animation state
+    // Independent animation states
+    let eyeState = EYE_CLOSED;
+    let armOut = false;
+    let waveFrame = -1;       // -1 = idle, 0-4 = wave sequence index
     let greeting = null;
-    let waveFrame = -1;     // -1 = idle, 0-2 = wave frames
-    let greetingTimeout = null;
-    let waveInterval = null;
+
+    // Timer handles
+    let eyeTimer = null;
+    let eyeCloseTimer = null;
+    let armTimer = null;
+    let greetTimer = null;
+    let waveTimer = null;
 
     const frameHeight = 1 + maxVisible + 1; // header + items + status
     let initialized = false;
@@ -105,43 +121,91 @@ function splitPanelSelect({ agentItems, dirItemsFn, maxVisible = 13, agentFrecen
     stdout.write(HIDE_CURSOR);
 
     function startAnimation() {
+      // Eye glances on prime interval
+      eyeTimer = setInterval(() => {
+        // Pick a random eye sequence
+        const sequences = [
+          [EYE_CENTER],                          // quick peek
+          [EYE_LEFT],                            // glance left
+          [EYE_RIGHT],                           // glance right
+          [EYE_CENTER, EYE_LEFT],                // peek then look left
+          [EYE_CENTER, EYE_RIGHT],               // peek then look right
+          [EYE_LEFT, EYE_CENTER, EYE_RIGHT],     // scan left to right
+          [EYE_RIGHT, EYE_CENTER, EYE_LEFT],     // scan right to left
+        ];
+        const seq = sequences[Math.floor(Math.random() * sequences.length)];
+        let step = 0;
+        eyeState = seq[0];
+        render();
+
+        const stepInterval = setInterval(() => {
+          step++;
+          if (step >= seq.length) {
+            clearInterval(stepInterval);
+            // Hold last position briefly, then close
+            eyeCloseTimer = setTimeout(() => {
+              eyeState = EYE_CLOSED;
+              render();
+            }, 601); // prime hold duration
+            return;
+          }
+          eyeState = seq[step];
+          render();
+        }, 409); // prime step duration
+      }, P_EYE);
+
+      // Arm idle sway on different prime interval
+      armTimer = setInterval(() => {
+        if (waveFrame < 0) { // only sway when not waving
+          armOut = !armOut;
+          render();
+        }
+      }, P_ARM);
+
+      // Greeting + wave on prime-bounded random interval
       scheduleGreeting();
     }
 
     function scheduleGreeting() {
-      const delay = 4000 + Math.random() * 6000;
-      greetingTimeout = setTimeout(() => {
+      const delay = P_GREET_MIN + Math.random() * (P_GREET_MAX - P_GREET_MIN);
+      greetTimer = setTimeout(() => {
         greeting = GREETINGS[Math.floor(Math.random() * GREETINGS.length)];
 
-        // Play wave animation: cycle through frames then back to idle
+        // Wave sequence: raise, point, open, point, lower
         let waveStep = 0;
-        const waveSequence = [0, 1, 2, 1, 0]; // lift, up, tilt, up, lift
-        waveFrame = waveSequence[0];
+        const waveSeq = [1, 2, 3, 2, 1, 0]; // indices into WAVE_TOP/WAVE_ARM
+        waveFrame = waveSeq[0];
         render();
 
-        waveInterval = setInterval(() => {
+        waveTimer = setInterval(() => {
           waveStep++;
-          if (waveStep >= waveSequence.length) {
-            // Wave done, return to idle
-            clearInterval(waveInterval);
-            waveInterval = null;
+          if (waveStep >= waveSeq.length) {
+            clearInterval(waveTimer);
+            waveTimer = null;
             waveFrame = -1;
             greeting = null;
             render();
             if (phase === 'agent') scheduleGreeting();
             return;
           }
-          waveFrame = waveSequence[waveStep];
+          // Clear greeting text partway through
+          if (waveStep === waveSeq.length - 2) greeting = null;
+          waveFrame = waveSeq[waveStep];
           render();
-        }, 300);
+        }, 307); // prime frame duration
       }, delay);
     }
 
     function stopAnimation() {
-      if (waveInterval) clearInterval(waveInterval);
-      if (greetingTimeout) clearTimeout(greetingTimeout);
-      waveInterval = null;
-      greetingTimeout = null;
+      if (eyeTimer) clearInterval(eyeTimer);
+      if (eyeCloseTimer) clearTimeout(eyeCloseTimer);
+      if (armTimer) clearInterval(armTimer);
+      if (greetTimer) clearTimeout(greetTimer);
+      if (waveTimer) clearInterval(waveTimer);
+      eyeTimer = armTimer = greetTimer = waveTimer = null;
+      eyeCloseTimer = null;
+      eyeState = EYE_CLOSED;
+      armOut = false;
       waveFrame = -1;
       greeting = null;
     }
@@ -234,7 +298,7 @@ function splitPanelSelect({ agentItems, dirItemsFn, maxVisible = 13, agentFrecen
       if (!agent) return '';
 
       const color = getColor(agent.color || 'cyan');
-      const logoLines = waveFrame >= 0 ? LOGO_WAVE[waveFrame] : LOGO_IDLE;
+      const logoLines = buildLogo(eyeState, armOut, waveFrame);
 
       // Layout:
       // row 0: (empty / padding)
