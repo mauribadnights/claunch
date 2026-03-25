@@ -21,10 +21,29 @@ const COLORS = {
   orange: `${ESC}[38;5;208m`,
 };
 
-const LOGO_LINES = [
-  ' ▐▛███▜▌',
+// Animation frames: idle + 3 wave frames (right arm lifts and waves)
+const LOGO_IDLE = [
+  ' ▐▛███▜▌ ',
   '▝▜█████▛▘',
-  '  ▘▘ ▝▝',
+  '  ▘▘ ▝▝  ',
+];
+
+const LOGO_WAVE = [
+  [  // frame 0: arm lifts off
+    ' ▐▛███▜▌▘',
+    '▝▜█████▛ ',
+    '  ▘▘ ▝▝  ',
+  ],
+  [  // frame 1: arm up
+    ' ▐▛███▜▌▝',
+    '▝▜█████▛ ',
+    '  ▘▘ ▝▝  ',
+  ],
+  [  // frame 2: arm tilt
+    ' ▐▛███▜▌▘',
+    '▝▜█████▛ ',
+    '  ▘▘ ▝▝  ',
+  ],
 ];
 
 const GREETINGS = ['hi!', 'hey!', 'ready!', "let's go!", 'pick me!', 'hello!', 'yo!'];
@@ -71,10 +90,10 @@ function splitPanelSelect({ agentItems, dirItemsFn, maxVisible = 13, agentFrecen
     let dirFiltered = [];
 
     // Animation state
-    let breathFrame = 0;
     let greeting = null;
+    let waveFrame = -1;     // -1 = idle, 0-2 = wave frames
     let greetingTimeout = null;
-    let animInterval = null;
+    let waveInterval = null;
 
     const frameHeight = 1 + maxVisible + 1; // header + items + status
     let initialized = false;
@@ -85,11 +104,6 @@ function splitPanelSelect({ agentItems, dirItemsFn, maxVisible = 13, agentFrecen
     stdout.write(HIDE_CURSOR);
 
     function startAnimation() {
-      animInterval = setInterval(() => {
-        breathFrame = (breathFrame + 1) % 4;
-        render();
-      }, 800);
-
       scheduleGreeting();
     }
 
@@ -97,20 +111,38 @@ function splitPanelSelect({ agentItems, dirItemsFn, maxVisible = 13, agentFrecen
       const delay = 4000 + Math.random() * 6000;
       greetingTimeout = setTimeout(() => {
         greeting = GREETINGS[Math.floor(Math.random() * GREETINGS.length)];
+
+        // Play wave animation: cycle through frames then back to idle
+        let waveStep = 0;
+        const waveSequence = [0, 1, 2, 1, 0]; // lift, up, tilt, up, lift
+        waveFrame = waveSequence[0];
         render();
-        setTimeout(() => {
-          greeting = null;
+
+        waveInterval = setInterval(() => {
+          waveStep++;
+          if (waveStep >= waveSequence.length) {
+            // Wave done, return to idle
+            clearInterval(waveInterval);
+            waveInterval = null;
+            waveFrame = -1;
+            greeting = null;
+            render();
+            if (phase === 'agent') scheduleGreeting();
+            return;
+          }
+          waveFrame = waveSequence[waveStep];
           render();
-          if (phase === 'agent') scheduleGreeting();
-        }, 2000);
+        }, 300);
       }, delay);
     }
 
     function stopAnimation() {
-      if (animInterval) clearInterval(animInterval);
+      if (waveInterval) clearInterval(waveInterval);
       if (greetingTimeout) clearTimeout(greetingTimeout);
-      animInterval = null;
+      waveInterval = null;
       greetingTimeout = null;
+      waveFrame = -1;
+      greeting = null;
     }
 
     function getColor(colorName) {
@@ -201,8 +233,7 @@ function splitPanelSelect({ agentItems, dirItemsFn, maxVisible = 13, agentFrecen
       if (!agent) return '';
 
       const color = getColor(agent.color || 'cyan');
-      const breathBold = (breathFrame === 1) ? BOLD : (breathFrame === 3) ? DIM : '';
-      const breathReset = breathBold ? RESET : '';
+      const logoLines = waveFrame >= 0 ? LOGO_WAVE[waveFrame] : LOGO_IDLE;
 
       // Layout:
       // row 0: (empty / padding)
@@ -216,12 +247,12 @@ function splitPanelSelect({ agentItems, dirItemsFn, maxVisible = 13, agentFrecen
       const logoOffset = 1;
       const descOffset = 5;
 
-      if (row >= logoOffset && row < logoOffset + LOGO_LINES.length) {
+      if (row >= logoOffset && row < logoOffset + logoLines.length) {
         const logoIdx = row - logoOffset;
-        const logoLine = LOGO_LINES[logoIdx];
-        let line = `  ${breathBold}${color}${logoLine}${RESET}${breathReset}`;
+        const logoLine = logoLines[logoIdx];
+        let line = `  ${color}${logoLine}${RESET}`;
         if (logoIdx === 0 && greeting) {
-          line += `  ${color}${greeting}${RESET}`;
+          line += ` ${color}${greeting}${RESET}`;
         }
         return line;
       }
