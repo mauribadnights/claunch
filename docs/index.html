@@ -560,7 +560,7 @@
     <div class="container">
       <span class="hero-badge">v0.1.0</span>
       <h1>One command.<br><span class="accent">Every agent.</span></h1>
-      <p>Universal agent launcher for Claude Code. Interactive TUI with fuzzy search, frecency ranking, and auto-discovery. No more alias walls.</p>
+      <p>A smart fuzzy agent and project picker for Claude Code. Get into your projects faster than ever. No more alias walls.</p>
       <div class="hero-actions">
         <a href="#quickstart" class="btn btn-primary">Get Started</a>
         <a href="https://github.com/mauribadnights/claunch" class="btn btn-secondary" target="_blank" rel="noopener">
@@ -585,31 +585,30 @@
         <div class="terminal-body" id="terminal-demo">
           <div><span class="prompt">$</span> <span class="cmd">claunch</span></div>
           <div>&nbsp;</div>
-          <div>
-            <span class="bold">agent</span> <span class="dim">&gt;</span> <span class="cursor-blink"></span>
-            <span style="float:right; padding-right: 80px">
-              <span class="accent"> &#9618;&#9611;&#9619;&#9619;&#9619;&#9616;&#9612;</span>
-            </span>
+          <div style="display:flex; justify-content:space-between">
+            <span><span class="bold">agent</span> <span class="dim">&gt;</span> <span class="cursor-blink"></span></span>
+            <span><span class="accent"> &#9618;&#9611;&#9619;&#9619;&#9619;&#9616;&#9612;</span></span>
           </div>
-          <div class="selected">
-            <span class="accent">&gt;</span> <span class="bold">cto</span> <span class="dim">[myapp]</span>
-            <span style="float:right; padding-right: 72px">
-              <span class="accent">&#9565;&#9616;&#9608;&#9608;&#9608;&#9608;&#9608;&#9611;&#9737;</span>
-            </span>
+          <div style="display:flex; justify-content:space-between" class="selected">
+            <span><span class="accent">&gt;</span> <span class="bold">cto</span> <span class="dim">[myapp]</span></span>
+            <span><span class="accent">&#9565;&#9616;&#9608;&#9608;&#9608;&#9608;&#9608;&#9611;&#9737;</span> <span class="accent">hey!</span></span>
           </div>
-          <div>&nbsp; designer <span class="dim">[myapp]</span>
-            <span style="float:right; padding-right: 80px">
-              <span class="dim">&nbsp; &#9744; &#9765;</span>
-            </span>
+          <div style="display:flex; justify-content:space-between">
+            <span>&nbsp; designer <span class="dim">[myapp]</span></span>
+            <span><span class="dim">&nbsp; &#9744; &#9765;</span></span>
           </div>
           <div>&nbsp; devops <span class="dim">[infra]</span></div>
           <div>&nbsp; builder <span class="dim">[global]</span></div>
-          <div>&nbsp; reviewer <span class="dim">[global]</span></div>
-          <div>&nbsp; <span class="accent">(plain claude)</span> <span class="dim">[global]</span></div>
-          <div>&nbsp;</div>
-          <div>&nbsp;&nbsp;<span class="bold accent">cto</span></div>
-          <div>&nbsp;&nbsp;<span class="dim">Technical architect and</span></div>
-          <div>&nbsp;&nbsp;<span class="dim">engineering lead</span></div>
+          <div style="display:flex; justify-content:space-between">
+            <span>&nbsp; <span class="accent">(plain claude)</span> <span class="dim">[global]</span></span>
+            <span>&nbsp;&nbsp;<span class="bold accent">cto</span></span>
+          </div>
+          <div style="display:flex; justify-content:flex-end">
+            <span><span class="dim">Technical architect and</span></span>
+          </div>
+          <div style="display:flex; justify-content:flex-end">
+            <span><span class="dim">engineering lead</span></span>
+          </div>
           <div>&nbsp;</div>
           <div><span class="dim">6 | type to filter | enter</span></div>
         </div>
@@ -623,19 +622,19 @@
       <div class="comparison">
         <div class="comparison-card before">
           <h3>Before</h3>
-          <pre><span style="color:var(--text-muted)"># .zshrc - growing forever</span>
+          <pre><span style="color:var(--text-muted)"># .zshrc - growing forever, good luck remembering these</span>
 alias claude-cto="cd ~/projects/myapp && claude --agent cto"
 alias claude-designer="cd ~/projects/myapp && claude --agent designer"
 alias claude-devops="cd ~/infra && claude --agent devops"
 alias claude-reviewer="cd ~/api && claude --agent reviewer"
 alias claude-builder="cd ~/frontend && claude --agent builder"
-<span style="color:var(--text-muted)"># ... 15 more ...</span></pre>
+<span style="color:var(--text-muted)"># ... 15 more I already forgot about ...</span></pre>
         </div>
         <div class="comparison-card after">
           <h3>After</h3>
           <pre><span style="color:var(--green)">$ claunch</span>
 
-<span style="color:var(--text-dim)">Pick a project, pick an agent.</span>
+<span style="color:var(--text-dim)">Pick an agent, pick a directory.</span>
 <span style="color:var(--text-dim)">Done.</span>
 
 <span style="color:var(--text-muted)"># Or go direct:</span>

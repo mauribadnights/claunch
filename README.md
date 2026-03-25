@@ -5,18 +5,18 @@
 [![npm version](https://img.shields.io/npm/v/@mauribadnights/claunch.svg)](https://www.npmjs.com/package/@mauribadnights/claunch)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
-## The Problem
+## Why I Built This
 
-As your Claude Code agent collection grows, you end up with a wall of shell aliases:
+I don't know about you, but as I started making different agents for different things, and was simultaneously working on a hundred different projects, I got tired of constantly running long commands to navigate to the directory I want and call the agent I need. At first I fixed it using shell aliases, but that got messy fast and I couldn't keep track of all of them:
 
 ```bash
 alias claude-cto="cd ~/projects/myapp && claude --agent cto"
 alias claude-designer="cd ~/projects/myapp && claude --agent designer"
 alias claude-devops="cd ~/infra && claude --agent devops"
-# ... 15 more aliases ...
+# ... 15 more aliases that I'll definitely forget about ...
 ```
 
-Each new project or agent means another alias. They pile up, break when you reorganize, and aren't portable.
+So I built a smart fuzzy agent and project picker to get into my projects faster than ever.
 
 ## The Fix
 
@@ -26,22 +26,18 @@ npm install -g @mauribadnights/claunch
 
 ```
 $ claunch
-◆  claunch
-│
-◆  Project
-│  ● myapp (3 agents)
-│  ○ infra (2 agents)
-│  ○ docs (1 agent)
-│
-◆  Agent
-│  ● cto — Technical architect and engineering lead
-│  ○ designer — UI/UX design advisor
-│  ○ devops — Infrastructure and deployment
-│
-◇  Launching cto in myapp
+
+agent > _                    |  ▐▛███▜▌
+> cto          [myapp]       | ▝▜█████▛▘  hey!
+  designer     [myapp]       |   ▘▘ ▝▝
+  devops       [infra]       |
+  builder      [global]      |   cto
+  (plain claude) [global]    |   Technical architect and
+                             |   engineering lead
+6 | type to filter | enter   |
 ```
 
-One command. Interactive picker. No aliases.
+One command. Split-panel TUI. Fuzzy search. No aliases.
 
 ## Quick Start
 
@@ -53,6 +49,9 @@ npm install -g @mauribadnights/claunch
 claunch add myapp ~/projects/myapp
 claunch add infra ~/infrastructure
 
+# Or auto-discover everything under a root
+claunch scan ~/projects
+
 # Launch interactively
 claunch
 
@@ -62,13 +61,13 @@ claunch myapp cto
 
 ## How It Works
 
-claunch reads agent definitions from each project's `.claude/agents/` directory — the same place Claude Code already looks for agents. No new config format to learn.
+claunch reads agent definitions from each project's `.claude/agents/` directory -- the same place Claude Code already looks for agents. No new config format to learn.
 
 ```
 ~/projects/myapp/
 ├── .claude/
 │   └── agents/
-│       ├── cto.md          ← claunch discovers these
+│       ├── cto.md          <- claunch discovers these
 │       ├── designer.md
 │       └── devops.md
 ├── src/
@@ -79,6 +78,8 @@ When you run `claunch myapp cto`, it:
 1. `cd`s to `~/projects/myapp/`
 2. Runs `claude --agent cto` (plus any default flags you've configured)
 
+The interactive TUI goes further -- after picking an agent, you get a second panel to pick which directory to launch in, with fuzzy search on both. It tracks what you use most with frecency ranking (Mozilla-style exponential decay, 14-day half-life) so your favorites float to the top over time.
+
 ## Usage
 
 ```
@@ -88,6 +89,7 @@ claunch <project> <agent> [args...]  Launch an agent in project context
 
 claunch add <name> <dir>             Register a project
 claunch remove <name>                Unregister a project
+claunch scan [root-dir]              Auto-discover projects
 claunch list                         List all projects (non-interactive)
 claunch init                         Create default config
 claunch completions <zsh|bash|fish>  Print shell completions
@@ -100,6 +102,10 @@ Config lives at `~/.claunch/config.yaml`:
 ```yaml
 defaults:
   claude_flags: []  # flags appended to every launch
+
+scan_roots:         # directories for `claunch scan`
+  - ~/projects
+  - ~/work
 
 projects:
   myapp:
