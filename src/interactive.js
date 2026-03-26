@@ -129,6 +129,9 @@ async function interactivePick() {
 
   const targetDir = dir || expandHome(config.projects[sourceProject]?.dir || '~');
   const agentLabel = agentName || 'plain claude';
+
+  // Clear terminal before launching
+  process.stdout.write('\x1b[2J\x1b[H');
   console.log(`\x1b[2m${agentLabel} in ${shortenPath(targetDir)}\x1b[0m`);
 
   if (agentName === null) {
