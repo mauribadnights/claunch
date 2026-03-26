@@ -8,7 +8,7 @@ const HIDE_CURSOR = `${ESC}[?25l`;
 const SHOW_CURSOR = `${ESC}[?25h`;
 const CLR = `\r${ESC}[2K`;
 
-// Color name → ANSI code
+// Color name -> ANSI code
 const COLORS = {
   red: `${ESC}[31m`,
   green: `${ESC}[32m`,
@@ -21,54 +21,131 @@ const COLORS = {
   orange: `${ESC}[38;5;208m`,
 };
 
-const GREETINGS = ['hi!', 'hey!', 'ready!', "let's go!", 'pick me!', 'hello!', 'yo!'];
+// ============================================================
+// Pixel grid -> block character renderer
+// Each 2x2 pixel cell maps to one Unicode block character.
+// Index = UL*8 + UR*4 + LL*2 + LR
+// ============================================================
+const BLOCKS = ' \u2597\u2596\u2584\u259D\u2590\u259E\u259F\u2598\u259A\u258C\u2599\u2580\u259C\u259B\u2588';
+//              0  ▗1   ▖2   ▄3   ▝4   ▐5   ▞6   ▟7   ▘8   ▚9   ▌10  ▙11  ▀12  ▜13  ▛14  █15
 
-// Eye states: ███ (closed), █▄█ (center), ▄██ (left), ██▄ (right)
-const EYE_FACES = ['███', '█▄█', '▄██', '██▄'];
-const EYE_CLOSED = 0, EYE_CENTER = 1, EYE_LEFT = 2, EYE_RIGHT = 3;
+function gridToLines(grid) {
+  const lines = [];
+  for (let y = 0; y < grid.length; y += 2) {
+    const top = grid[y];
+    const bot = grid[y + 1] || new Array(top.length).fill(0);
+    let line = '';
+    for (let x = 0; x < top.length; x += 2) {
+      const ul = top[x] || 0;
+      const ur = top[x + 1] || 0;
+      const ll = bot[x] || 0;
+      const lr = bot[x + 1] || 0;
+      line += BLOCKS[ul * 8 + ur * 4 + ll * 2 + lr];
+    }
+    lines.push(line);
+  }
+  return lines;
+}
 
-// Arm characters: ▘ (in/left pixel), ▝ (out/right pixel)
-const ARM_IN = '▘', ARM_OUT = '▝';
+// ============================================================
+// Logo as pixel grid: 6 rows x 20 columns = 3 char lines x 10 chars
+//
+//   . . . # # # # # # # # # # # # . . . . .   <- head top
+//   . . . # # . # # # # # # . # # . . . . .   <- head bottom
+//   . # # # # # # # # # # # # # # # # . . .   <- body top
+//   . . . # # # # # # # # # # # # . . . . .   <- body bottom
+//   . . . . # . # . . . . # . # . . . . . .   <- feet top
+//   . . . . . . . . . . . . . . . . . . . .   <- feet bottom
+//
+// Renders to:
+//    ▐▛███▜▌
+//   ▝▜█████▛▘
+//     ▘▘ ▝▝
+// ============================================================
+const IDLE_GRID = [
+  [0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0],
+  [0,0,0,1,1,0,1,1,1,1,1,1,0,1,1,0,0,0,0,0],
+  [0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0],
+  [0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0],
+  [0,0,0,0,1,0,1,0,0,0,0,1,0,1,0,0,0,0,0,0],
+  [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+];
 
-// Wave overlay on head row: ▖ (point, connects to arm below), ▄ (open hand)
-const WAVE_TOP = [' ', '▖', '▄', '▖', ' ']; // indexed by wave frame
-const WAVE_ARM = [ARM_IN, ARM_IN, ARM_OUT, ARM_OUT, ARM_IN]; // arm during wave
+// Eye states
+const EYE_CLOSED = 0, EYE_LEFT = 1, EYE_RIGHT = 2;
 
-// Prime intervals (ms) — never align the same way twice
-const P_EYE = 3001;       // eye glance cycle
-const P_ARM = 2003;       // arm idle sway
-const P_GREET_MIN = 7013; // greeting minimum delay
-const P_GREET_MAX = 13007; // greeting maximum delay
+// Wave pixel modifications per frame: [row, col, value]
+// Arm at pixel [2][16] is always 1 (connected to body).
+// Wave extends upward through [1][16] and [0][16-17].
+// Wave only extends into y1 (body-head boundary), never up to y0
+const WAVE_MODS = [
+  [[1, 16, 1]],                           // 0: arm raises to head level
+  [[1, 16, 1], [1, 17, 1]],               // 1: hand opens
+  [[1, 16, 1]],                           // 2: hand closes
+  [[1, 16, 1], [1, 17, 1]],               // 3: hand opens again
+  [[1, 16, 1]],                           // 4: hand closes
+  [],                                     // 5: arm down
+];
+
+// Prime intervals (ms) -- never sync the same way twice
+const P_EYE = 3001;
+const P_ARM = 2003;
+const P_GREET_MIN = 7013;
+const P_GREET_MAX = 13007;
 
 /**
- * Compose logo lines from independent animation states.
- * @param {number} eyeState - 0=closed, 1=center, 2=left, 3=right
- * @param {boolean} armOut - true=▝, false=▘
- * @param {number} waveFrame - -1=idle, 0-4=wave sequence
+ * Build logo from independent animation states.
+ * Copies the idle grid, applies mutations, converts to block chars.
  */
 function buildLogo(eyeState, armOut, waveFrame) {
-  const face = EYE_FACES[eyeState];
-  const isWaving = waveFrame >= 0;
-  const headEnd = isWaving ? WAVE_TOP[waveFrame] : ' ';
-  const arm = isWaving ? WAVE_ARM[waveFrame] : (armOut ? ARM_OUT : ARM_IN);
-  return [
-    ` ▐▛${face}▜▌${headEnd}`,
-    `▝▜█████▛${arm}`,
-    '  ▘▘ ▝▝  ',
-  ];
+  // Deep copy
+  const g = IDLE_GRID.map(r => [...r]);
+
+  // Eye: move the two "pupil" gaps on y1 (pixels 5 and 12 are the eye holes)
+  // Shift them by toggling adjacent pixels
+  if (eyeState === EYE_LEFT) {
+    g[1][5] = 1; g[1][4] = 0;   // left eye: fill original, open one left
+    g[1][12] = 1; g[1][11] = 0; // right eye: fill original, open one left
+  } else if (eyeState === EYE_RIGHT) {
+    g[1][5] = 1; g[1][6] = 0;   // left eye: fill original, open one right
+    g[1][12] = 1; g[1][13] = 0; // right eye: fill original, open one right
+  }
+
+  // Arm only moves during wave, stays still at idle
+
+  // Wave: apply pixel modifications
+  if (waveFrame >= 0 && waveFrame < WAVE_MODS.length) {
+    for (const [y, x, v] of WAVE_MODS[waveFrame]) {
+      g[y][x] = v;
+    }
+  }
+
+  return gridToLines(g);
 }
+
+function shiftRow(row, offset) {
+  const shifted = new Array(row.length).fill(0);
+  for (let i = 0; i < row.length; i++) {
+    const src = i - offset;
+    if (src >= 0 && src < row.length) shifted[i] = row[src];
+  }
+  return shifted;
+}
+
+const GREETINGS = [
+  'pick me!', 'pick me!', 'me me me!', 'choose me!', 'over here!',
+  'this one!', 'right here!', 'good choice!', "i'm the best!",
+  "you won't regret it!", 'trust me!', 'obviously me!', 'no brainer!',
+  "i'm ready!", "let's go!", 'pick pick pick!', 'hey, me!',
+  "i'm your agent!", 'best agent here!', 'the one and only!',
+  'psst!', 'sup!', 'boo!', 'yo!', 'hey!', 'hi!', 'salutations!',
+];
 
 /**
  * Split-panel fuzzy selector with animated Claude logo.
  *
  * Phase 1 (agent): Left = fuzzy list, Right = logo + description
  * Phase 2 (directory): Left = frozen agent, Right = fuzzy list
- *
- * @param {Object} opts
- * @param {Array} opts.agentItems - agent items with { label, tag, description, color, value, searchText }
- * @param {Array} opts.dirItemsFn - function(selectedAgent) => directory items
- * @param {number} [opts.maxVisible=13]
- * @returns {Promise<{agent, dir}|null>}
  */
 function splitPanelSelect({ agentItems, dirItemsFn, maxVisible = 13, agentFrecency = {}, dirFrecency = {} }) {
   return new Promise((resolve) => {
@@ -76,7 +153,7 @@ function splitPanelSelect({ agentItems, dirItemsFn, maxVisible = 13, agentFrecen
     const stdout = process.stdout;
     const cols = Math.min(process.stdout.columns || 80, 140);
     const leftWidth = Math.floor(cols * 0.42);
-    const rightWidth = cols - leftWidth - 3; // 3 for separator
+    const rightWidth = cols - leftWidth - 3;
 
     const agentFrecOpts = {
       frecencyScores: agentFrecency,
@@ -87,13 +164,12 @@ function splitPanelSelect({ agentItems, dirItemsFn, maxVisible = 13, agentFrecen
       frecencyKeyFn: (item) => item.value?.dir || '',
     };
 
-    let phase = 'agent'; // 'agent' | 'directory'
+    let phase = 'agent';
     let query = '';
     let cursor = 0;
     let filtered = fuzzyFilter(agentItems, query, agentFrecOpts);
     let selectedAgent = null;
 
-    // Directory state
     let dirItems = [];
     let dirQuery = '';
     let dirCursor = 0;
@@ -102,17 +178,17 @@ function splitPanelSelect({ agentItems, dirItemsFn, maxVisible = 13, agentFrecen
     // Independent animation states
     let eyeState = EYE_CLOSED;
     let armOut = false;
-    let waveFrame = -1;       // -1 = idle, 0-4 = wave sequence index
+    let waveFrame = -1;
     let greeting = null;
 
     // Timer handles
     let eyeTimer = null;
-    let eyeCloseTimer = null;
+    let eyeSeqTimer = null;
     let armTimer = null;
     let greetTimer = null;
     let waveTimer = null;
 
-    const frameHeight = 1 + maxVisible + 1; // header + items + status
+    const frameHeight = 1 + maxVisible + 1;
     let initialized = false;
 
     stdin.setRawMode(true);
@@ -121,48 +197,34 @@ function splitPanelSelect({ agentItems, dirItemsFn, maxVisible = 13, agentFrecen
     stdout.write(HIDE_CURSOR);
 
     function startAnimation() {
-      // Eye glances on prime interval
+      // Eyes: glance on prime interval
       eyeTimer = setInterval(() => {
-        // Pick a random eye sequence
         const sequences = [
-          [EYE_CENTER],                          // quick peek
-          [EYE_LEFT],                            // glance left
-          [EYE_RIGHT],                           // glance right
-          [EYE_CENTER, EYE_LEFT],                // peek then look left
-          [EYE_CENTER, EYE_RIGHT],               // peek then look right
-          [EYE_LEFT, EYE_CENTER, EYE_RIGHT],     // scan left to right
-          [EYE_RIGHT, EYE_CENTER, EYE_LEFT],     // scan right to left
+          [EYE_LEFT],
+          [EYE_RIGHT],
+          [EYE_LEFT, EYE_RIGHT],
+          [EYE_RIGHT, EYE_LEFT],
+          [EYE_LEFT, EYE_CLOSED, EYE_RIGHT],
         ];
         const seq = sequences[Math.floor(Math.random() * sequences.length)];
         let step = 0;
         eyeState = seq[0];
         render();
 
-        const stepInterval = setInterval(() => {
+        eyeSeqTimer = setInterval(() => {
           step++;
           if (step >= seq.length) {
-            clearInterval(stepInterval);
-            // Hold last position briefly, then close
-            eyeCloseTimer = setTimeout(() => {
-              eyeState = EYE_CLOSED;
-              render();
-            }, 601); // prime hold duration
+            clearInterval(eyeSeqTimer);
+            eyeSeqTimer = null;
+            setTimeout(() => { eyeState = EYE_CLOSED; render(); }, 601);
             return;
           }
           eyeState = seq[step];
           render();
-        }, 409); // prime step duration
+        }, 409);
       }, P_EYE);
 
-      // Arm idle sway on different prime interval
-      armTimer = setInterval(() => {
-        if (waveFrame < 0) { // only sway when not waving
-          armOut = !armOut;
-          render();
-        }
-      }, P_ARM);
-
-      // Greeting + wave on prime-bounded random interval
+      // Greeting + wave
       scheduleGreeting();
     }
 
@@ -170,16 +232,14 @@ function splitPanelSelect({ agentItems, dirItemsFn, maxVisible = 13, agentFrecen
       const delay = P_GREET_MIN + Math.random() * (P_GREET_MAX - P_GREET_MIN);
       greetTimer = setTimeout(() => {
         greeting = GREETINGS[Math.floor(Math.random() * GREETINGS.length)];
-
-        // Wave sequence: raise, point, open, point, lower
-        let waveStep = 0;
-        const waveSeq = [1, 2, 3, 2, 1, 0]; // indices into WAVE_TOP/WAVE_ARM
-        waveFrame = waveSeq[0];
+        let step = 0;
+        const seq = [0, 1, 2, 3, 4, 5];
+        waveFrame = seq[0];
         render();
 
         waveTimer = setInterval(() => {
-          waveStep++;
-          if (waveStep >= waveSeq.length) {
+          step++;
+          if (step >= seq.length) {
             clearInterval(waveTimer);
             waveTimer = null;
             waveFrame = -1;
@@ -188,22 +248,20 @@ function splitPanelSelect({ agentItems, dirItemsFn, maxVisible = 13, agentFrecen
             if (phase === 'agent') scheduleGreeting();
             return;
           }
-          // Clear greeting text partway through
-          if (waveStep === waveSeq.length - 2) greeting = null;
-          waveFrame = waveSeq[waveStep];
+          if (step === seq.length - 1) greeting = null;
+          waveFrame = seq[step];
           render();
-        }, 307); // prime frame duration
+        }, 307);
       }, delay);
     }
 
     function stopAnimation() {
       if (eyeTimer) clearInterval(eyeTimer);
-      if (eyeCloseTimer) clearTimeout(eyeCloseTimer);
+      if (eyeSeqTimer) clearInterval(eyeSeqTimer);
       if (armTimer) clearInterval(armTimer);
       if (greetTimer) clearTimeout(greetTimer);
       if (waveTimer) clearInterval(waveTimer);
-      eyeTimer = armTimer = greetTimer = waveTimer = null;
-      eyeCloseTimer = null;
+      eyeTimer = eyeSeqTimer = armTimer = greetTimer = waveTimer = null;
       eyeState = EYE_CLOSED;
       armOut = false;
       waveFrame = -1;
@@ -230,16 +288,14 @@ function splitPanelSelect({ agentItems, dirItemsFn, maxVisible = 13, agentFrecen
       const totalCount = phase === 'agent' ? agentItems.length : dirItems.length;
       const filteredCount = currentItems.length;
 
-      // Get selected agent info for right panel
       const hoveredAgent = phase === 'agent' ? filtered[cursor] : null;
 
       for (let row = 0; row < frameHeight; row++) {
         const leftContent = renderLeftLine(row, phase, visible, currentQuery, currentCursor, maxVisible, totalCount, filteredCount, selectedAgent);
         const rightContent = renderRightLine(row, phase, hoveredAgent, dirFiltered, dirQuery, dirCursor, maxVisible, dirItems.length, dirFiltered.length, rightWidth);
 
-        // Compose line: left | separator | right
         const left = padOrTruncate(leftContent, leftWidth);
-        const sep = row === 0 ? `${DIM}|${RESET}` : `${DIM}|${RESET}`;
+        const sep = `${DIM}|${RESET}`;
         const right = padOrTruncate(rightContent, rightWidth);
 
         stdout.write(`${CLR}${left} ${sep} ${right}`);
@@ -249,12 +305,10 @@ function splitPanelSelect({ agentItems, dirItemsFn, maxVisible = 13, agentFrecen
 
     function renderLeftLine(row, phase, visible, query, cursor, maxVisible, total, filteredCount, selectedAgent) {
       if (phase === 'agent') {
-        // Header
         if (row === 0) {
           const placeholder = query ? '' : `${DIM}type to filter...${RESET}`;
           return `${BOLD}agent${RESET} ${DIM}>${RESET} ${query}${placeholder}`;
         }
-        // Items
         const idx = row - 1;
         if (idx < maxVisible) {
           if (idx < visible.length) {
@@ -267,11 +321,9 @@ function splitPanelSelect({ agentItems, dirItemsFn, maxVisible = 13, agentFrecen
           }
           return '';
         }
-        // Status
         const status = query ? `${filteredCount}/${total}` : `${total}`;
         return `${DIM}${status} | type to filter | enter${RESET}`;
       } else {
-        // Frozen agent display
         if (row === 0) {
           const agentLabel = selectedAgent?.label || '';
           const tag = selectedAgent?.tag ? ` ${DIM}[${selectedAgent.tag}]${RESET}` : '';
@@ -299,15 +351,6 @@ function splitPanelSelect({ agentItems, dirItemsFn, maxVisible = 13, agentFrecen
 
       const color = getColor(agent.color || 'cyan');
       const logoLines = buildLogo(eyeState, armOut, waveFrame);
-
-      // Layout:
-      // row 0: (empty / padding)
-      // row 1: logo line 0 + greeting
-      // row 2: logo line 1
-      // row 3: logo line 2
-      // row 4: (empty)
-      // row 5: agent name (bold)
-      // row 6+: description wrapped
 
       const logoOffset = 1;
       const descOffset = 5;
@@ -338,12 +381,10 @@ function splitPanelSelect({ agentItems, dirItemsFn, maxVisible = 13, agentFrecen
     }
 
     function renderDirList(row, visible, query, cursor, maxVisible, total, filteredCount) {
-      // Header
       if (row === 0) {
         const placeholder = query ? '' : `${DIM}type to filter...${RESET}`;
         return `${BOLD}directory${RESET} ${DIM}>${RESET} ${query}${placeholder}`;
       }
-      // Items
       const idx = row - 1;
       if (idx < maxVisible) {
         const items = visible.slice(0, maxVisible);
@@ -356,20 +397,13 @@ function splitPanelSelect({ agentItems, dirItemsFn, maxVisible = 13, agentFrecen
         }
         return '';
       }
-      // Status
       const status = query ? `${filteredCount}/${total}` : `${total}`;
       return `${DIM}${status} | type to filter | enter${RESET}`;
     }
 
     function handleKey(key) {
-      // Ctrl+C
-      if (key === '\x03') {
-        cleanup();
-        resolve(null);
-        return;
-      }
+      if (key === '\x03') { cleanup(); resolve(null); return; }
 
-      // Escape: go back to agent phase, or cancel
       if (key === '\x1b') {
         if (phase === 'directory') {
           phase = 'agent';
@@ -383,7 +417,6 @@ function splitPanelSelect({ agentItems, dirItemsFn, maxVisible = 13, agentFrecen
         return;
       }
 
-      // Enter
       if (key === '\r' || key === '\n') {
         if (phase === 'agent') {
           const agent = filtered[cursor];
@@ -391,13 +424,11 @@ function splitPanelSelect({ agentItems, dirItemsFn, maxVisible = 13, agentFrecen
           selectedAgent = agent;
           stopAnimation();
 
-          // Build directory items
           dirItems = dirItemsFn(agent.value);
           dirQuery = '';
           dirCursor = 0;
           dirFiltered = fuzzyFilter(dirItems, dirQuery, dirFrecOpts);
 
-          // If only one dir, skip picker
           if (dirItems.length <= 1) {
             const dir = dirItems[0]?.value?.dir || null;
             cleanup();
@@ -416,7 +447,6 @@ function splitPanelSelect({ agentItems, dirItemsFn, maxVisible = 13, agentFrecen
         }
       }
 
-      // Backspace
       if (key === '\x7f' || key === '\b') {
         if (phase === 'agent') {
           if (query.length > 0) {
@@ -435,40 +465,27 @@ function splitPanelSelect({ agentItems, dirItemsFn, maxVisible = 13, agentFrecen
         return;
       }
 
-      // Arrow up
       if (key === `${ESC}[A`) {
-        if (phase === 'agent') {
-          cursor = Math.max(0, cursor - 1);
-        } else {
-          dirCursor = Math.max(0, dirCursor - 1);
-        }
+        if (phase === 'agent') cursor = Math.max(0, cursor - 1);
+        else dirCursor = Math.max(0, dirCursor - 1);
         render();
         return;
       }
 
-      // Arrow down
       if (key === `${ESC}[B`) {
-        if (phase === 'agent') {
-          cursor = Math.min(Math.max(filtered.length - 1, 0), cursor + 1);
-        } else {
-          dirCursor = Math.min(Math.max(dirFiltered.length - 1, 0), dirCursor + 1);
-        }
+        if (phase === 'agent') cursor = Math.min(Math.max(filtered.length - 1, 0), cursor + 1);
+        else dirCursor = Math.min(Math.max(dirFiltered.length - 1, 0), dirCursor + 1);
         render();
         return;
       }
 
-      // Tab
       if (key === '\t') {
-        if (phase === 'agent') {
-          cursor = (cursor + 1) % Math.max(filtered.length, 1);
-        } else {
-          dirCursor = (dirCursor + 1) % Math.max(dirFiltered.length, 1);
-        }
+        if (phase === 'agent') cursor = (cursor + 1) % Math.max(filtered.length, 1);
+        else dirCursor = (dirCursor + 1) % Math.max(dirFiltered.length, 1);
         render();
         return;
       }
 
-      // Printable character
       if (key.length === 1 && key >= ' ') {
         if (phase === 'agent') {
           query += key;
@@ -498,16 +515,13 @@ function splitPanelSelect({ agentItems, dirItemsFn, maxVisible = 13, agentFrecen
   });
 }
 
-/** Pad or truncate a string (accounting for ANSI codes) to fit width */
 function padOrTruncate(str, width) {
   const visible = stripAnsi(str);
   if (visible.length >= width) {
-    // Truncate: find the position in the original string
     let visCount = 0;
     let i = 0;
     while (i < str.length && visCount < width - 1) {
       if (str[i] === '\x1b') {
-        // Skip ANSI sequence
         while (i < str.length && str[i] !== 'm') i++;
         i++;
         continue;
@@ -520,18 +534,15 @@ function padOrTruncate(str, width) {
   return str + ' '.repeat(width - visible.length);
 }
 
-/** Strip ANSI escape codes for length calculation */
 function stripAnsi(str) {
   return str.replace(/\x1b\[[0-9;]*m/g, '');
 }
 
-/** Wrap text to fit within width */
 function wrapText(text, width) {
   if (width <= 0) return [text];
   const words = text.split(' ');
   const lines = [];
   let current = '';
-
   for (const word of words) {
     if (current.length + word.length + 1 > width) {
       if (current) lines.push(current);
