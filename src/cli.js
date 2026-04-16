@@ -4,6 +4,7 @@ import { loadConfig, saveConfig, expandHome, getConfigPath } from './config.js';
 import { discoverAgents, resolveAgent } from './discovery.js';
 import { launch } from './launcher.js';
 import { generateZshCompletions, generateBashCompletions, generateFishCompletions, listProjects, listAgents } from './completions.js';
+import { PLAIN_CLAUDE } from './interactive.js';
 import { existsSync, readFileSync } from 'fs';
 import { resolve, dirname, join } from 'path';
 import { fileURLToPath } from 'url';
@@ -301,6 +302,7 @@ function cmdLaunch(launchArgs) {
       extraFlags: [],
       claudeFlags: config.defaults.claude_flags || [],
       passthrough,
+      frecencyKey: PLAIN_CLAUDE,
     });
     return;
   }

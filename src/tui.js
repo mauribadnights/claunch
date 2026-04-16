@@ -342,7 +342,7 @@ function splitPanelSelect({ agentItems, dirItemsFn, maxVisible = 13, agentFrecen
       if (phase === 'agent') {
         return renderAgentDetail(row, hoveredAgent, width);
       } else {
-        return renderDirList(row, dirFiltered, dirQuery, dirCursor, maxVisible, dirTotal, dirFilteredCount);
+        return renderDirList(row, dirFiltered, dirQuery, dirCursor, maxVisible, dirTotal, dirFilteredCount, width);
       }
     }
 
@@ -380,7 +380,7 @@ function splitPanelSelect({ agentItems, dirItemsFn, maxVisible = 13, agentFrecen
       return '';
     }
 
-    function renderDirList(row, visible, query, cursor, maxVisible, total, filteredCount) {
+    function renderDirList(row, visible, query, cursor, maxVisible, total, filteredCount, width) {
       if (row === 0) {
         const placeholder = query ? '' : `${DIM}type to filter...${RESET}`;
         return `${BOLD}directory${RESET} ${DIM}>${RESET} ${query}${placeholder}`;
@@ -393,7 +393,22 @@ function splitPanelSelect({ agentItems, dirItemsFn, maxVisible = 13, agentFrecen
           const sel = idx === cursor;
           const ptr = sel ? `${COLORS.cyan}>${RESET} ` : '  ';
           const lbl = sel ? `${BOLD}${item.label}${RESET}` : item.label;
-          return `${ptr}${lbl}`;
+          // Append dim shortened path so duplicate basenames (e.g. ~/Documents/diapason vs
+          // ~/Mindicio/Projects/Diapason/code) are distinguishable. Left-truncate with `…`
+          // when the path exceeds the remaining width — the tail is the distinguishing part.
+          const fullPath = item.description || '';
+          const labelVisLen = stripAnsi(lbl).length + 2; // 2 = pointer (2 visible chars)
+          // Budget accounts for: the leading space before the path (1) + 1-char safety
+          // margin against padOrTruncate clipping at width-1.
+          const pathBudget = Math.max(0, (width || 60) - labelVisLen - 2);
+          let pathStr = '';
+          if (fullPath && pathBudget > 3) {
+            const p = fullPath.length > pathBudget
+              ? '\u2026' + fullPath.slice(-(pathBudget - 1))
+              : fullPath;
+            pathStr = ` ${DIM}${p}${RESET}`;
+          }
+          return `${ptr}${lbl}${pathStr}`;
         }
         return '';
       }

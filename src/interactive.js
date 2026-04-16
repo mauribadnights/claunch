@@ -29,14 +29,16 @@ async function interactivePick() {
   // Build flat agent list
   const agentItems = [];
 
-  // Plain claude — global
+  // Plain claude — global. Include the literal label (with parens) in searchText so users
+  // searching verbatim (e.g. typing "(plain" or "claude") still hit it; keep the rest terse
+  // so the substring-length tiebreaker (1/length) stays favorable.
   agentItems.push({
     label: PLAIN_CLAUDE,
     tag: 'global',
     description: 'launch claude without an agent',
     color: 'cyan',
     value: { agentName: null, sourceProject: null, agentDir: null, isGlobal: true },
-    searchText: 'plain claude no agent global',
+    searchText: `${PLAIN_CLAUDE} no agent`,
   });
 
   for (const [projectName, projectConfig] of projects) {
@@ -142,6 +144,7 @@ async function interactivePick() {
       extraFlags: [],
       claudeFlags: config.defaults?.claude_flags || [],
       passthrough: [],
+      frecencyKey: PLAIN_CLAUDE,
     });
   } else {
     const sourceConfig = config.projects[sourceProject];
@@ -193,4 +196,4 @@ function shortenPath(p) {
   return p.startsWith(home) ? '~' + p.slice(home.length) : p;
 }
 
-export { interactivePick };
+export { interactivePick, PLAIN_CLAUDE };

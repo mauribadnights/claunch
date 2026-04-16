@@ -6,13 +6,17 @@ import { recordAccess } from './frecency.js';
  * Uses spawnSync so the TTY is cleanly handed to claude
  * (no leftover raw-mode state from interactive prompts).
  *
- * @param {Object} opts - { dir, agent, addDirs, extraFlags, claudeFlags, passthrough }
+ * @param {Object} opts - { dir, agent, addDirs, extraFlags, claudeFlags, passthrough, frecencyKey }
+ *   frecencyKey: explicit key to record under. Defaults to `agent`. Callers pass an explicit
+ *   key for pseudo-agents like "(plain claude)" so their usage is tracked.
  */
 function launch(opts) {
-  const { dir, agent, addDirs = [], extraFlags = [], claudeFlags = [], passthrough = [] } = opts;
+  const { dir, agent, addDirs = [], extraFlags = [], claudeFlags = [], passthrough = [], frecencyKey } = opts;
 
-  // Record frecency for agent and directory
-  if (agent) recordAccess('agents', agent);
+  // Record frecency for agent and directory. Key falls back to the agent name, so callers
+  // that want to track a pseudo-agent (e.g. plain claude with agent=null) must pass frecencyKey.
+  const agentKey = frecencyKey || agent;
+  if (agentKey) recordAccess('agents', agentKey);
   if (dir) recordAccess('directories', dir);
 
   const args = [];
