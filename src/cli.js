@@ -5,6 +5,8 @@ import { discoverAgents, resolveAgent } from './discovery.js';
 import { launch } from './launcher.js';
 import { generateZshCompletions, generateBashCompletions, generateFishCompletions, listProjects, listAgents } from './completions.js';
 import { PLAIN_CLAUDE } from './interactive.js';
+import { HARNESSES, isHarnessName } from './harness.js';
+import { cmdAudit } from './audit.js';
 import { existsSync, readFileSync } from 'fs';
 import { resolve, dirname, join } from 'path';
 import { fileURLToPath } from 'url';
@@ -23,6 +25,10 @@ if (args[0] === '--list-agents' && args[1]) {
   console.log(listAgents(args[1]));
   process.exit(0);
 }
+if (args[0] === '--list-harnesses') {
+  console.log(Object.keys(HARNESSES).join('\n'));
+  process.exit(0);
+}
 
 // No args: interactive picker (TTY) or text listing (pipe/CI)
 if (args.length === 0) {
@@ -31,7 +37,6 @@ if (args.length === 0) {
       const { interactivePick } = await import('./interactive.js');
       await interactivePick();
     } catch (err) {
-      // Fall back to text listing if raw mode / TTY fails
       if (err.code === 'ERR_INVALID_FD_TYPE' || err.message?.includes('setRawMode')) {
         showOverview();
       } else {
@@ -72,6 +77,10 @@ switch (command) {
   case 'upgrade':
     cmdUpdate();
     break;
+  case 'audit':
+    await cmdAudit(args.slice(1));
+    process.exit(0);
+    break;
   case 'help':
   case '--help':
   case '-h':
@@ -82,7 +91,8 @@ switch (command) {
     console.log(VERSION);
     break;
   default:
-    // Treat as: claunch <project> [agent] [extra-args...]
+    // Treat as either: claunch <harness> <project> [agent] [extra-args...]
+    //              or: claunch <project> [agent] [extra-args...]   (legacy, claude default)
     cmdLaunch(args);
     break;
 }
@@ -113,6 +123,11 @@ function showOverview() {
     }
     console.log();
   }
+
+  console.log('Harnesses:\n');
+  for (const h of Object.values(HARNESSES)) {
+    console.log(`  ${h.name.padEnd(8)} ${h.label} — ${h.description}`);
+  }
 }
 
 function cmdInit() {
@@ -122,8 +137,14 @@ function cmdInit() {
     return;
   }
   saveConfig({
-    defaults: { claude_flags: [] },
+    defaults: {
+      claude_flags: ['--dangerously-skip-permissions'],
+      codex_flags: ['--dangerously-bypass-approvals-and-sandbox', '--enable', 'goals'],
+      pi_flags: [],
+    },
+    scan_roots: [],
     projects: {},
+    harnesses: {},
   });
   console.log(`Created config at ${configPath}`);
   console.log('Add a project: claunch add <name> <directory>');
@@ -189,7 +210,6 @@ function cmdScan(scanArgs) {
     let added, existing;
 
     if (scanArgs.length >= 1) {
-      // Explicit root dir
       const rootDir = resolve(expandHome(scanArgs[0]));
       if (!existsSync(rootDir)) {
         console.error(`Directory not found: ${rootDir}`);
@@ -197,7 +217,6 @@ function cmdScan(scanArgs) {
       }
       ({ added, existing } = autoDiscover(rootDir));
     } else {
-      // Use configured scan_roots
       const config = loadConfig();
       if (config.scan_roots.length === 0) {
         console.error('No scan_roots configured. Add them to ~/.claunch/config.yaml or pass a directory:');
@@ -259,7 +278,21 @@ function cmdCompletions(shell) {
 }
 
 function cmdLaunch(launchArgs) {
-  const projectName = launchArgs[0];
+  // Detect harness prefix: `claunch claude ...`, `claunch codex ...`, `claunch pi ...`
+  let harnessName = 'claude';
+  let rest = launchArgs;
+
+  if (isHarnessName(launchArgs[0])) {
+    harnessName = launchArgs[0];
+    rest = launchArgs.slice(1);
+    if (rest.length === 0) {
+      // Bare `claunch <harness>` — list projects for that harness
+      showHarnessOverview(harnessName);
+      return;
+    }
+  }
+
+  const projectName = rest[0];
   const config = loadConfig();
   const project = config.projects[projectName];
 
@@ -270,8 +303,16 @@ function cmdLaunch(launchArgs) {
     process.exit(1);
   }
 
-  // claunch <project> — list agents
-  if (launchArgs.length === 1) {
+  if (harnessName === 'claude') {
+    cmdLaunchClaude(rest, project, projectName, config);
+  } else {
+    cmdLaunchOther(harnessName, rest, project, config);
+  }
+}
+
+function cmdLaunchClaude(rest, project, projectName, config) {
+  // claunch <project> — list agents (legacy behavior preserved)
+  if (rest.length === 1) {
     const agents = discoverAgents(project);
     const overrideNames = Object.keys(project.overrides || {});
     const allNames = new Set([...agents.map(a => a.name), ...overrideNames]);
@@ -289,50 +330,89 @@ function cmdLaunch(launchArgs) {
     return;
   }
 
-  // claunch <project> <agent> [extra-args...]
-  const agentName = launchArgs[1];
-  const passthrough = launchArgs.slice(2);
+  const agentName = rest[1];
+  const passthrough = rest.slice(2);
 
-  // Plain claude (no agent)
   if (agentName === 'plain' || agentName === '--no-agent') {
     launch({
+      harness: 'claude',
       dir: expandHome(project.dir),
       agent: null,
       addDirs: [],
       extraFlags: [],
-      claudeFlags: config.defaults.claude_flags || [],
+      harnessFlags: config.defaults.claude_flags || [],
       passthrough,
       frecencyKey: PLAIN_CLAUDE,
     });
     return;
   }
 
-  // Check project agents first, then fall back to vault/global agents
   const resolved = resolveAgent(project, agentName);
 
   launch({
+    harness: 'claude',
     ...resolved,
-    claudeFlags: config.defaults.claude_flags || [],
+    harnessFlags: config.defaults.claude_flags || [],
     passthrough,
   });
 }
 
+function cmdLaunchOther(harnessName, rest, project, config) {
+  // claunch codex <project> [args...] OR claunch pi <project> [args...]
+  const passthrough = rest.slice(1);
+  const harness = HARNESSES[harnessName];
+  const flagsKey = harness.default_flags_key;
+
+  launch({
+    harness: harnessName,
+    dir: expandHome(project.dir),
+    harnessFlags: config.defaults[flagsKey] || [],
+    passthrough,
+    frecencyKey: `(${harnessName})`,
+  });
+}
+
+function showHarnessOverview(harnessName) {
+  const harness = HARNESSES[harnessName];
+  const config = loadConfig();
+  const projects = Object.entries(config.projects);
+
+  console.log(`${harness.label} (${harness.name})\n`);
+  console.log(`  ${harness.description}`);
+  console.log(`  bin: ${harness.bin}`);
+  console.log(`  default flags: ${(config.defaults[harness.default_flags_key] || []).join(' ') || '(none)'}`);
+  console.log(`\nProjects (use \`claunch ${harnessName} <project>\`):\n`);
+  for (const [name] of projects) {
+    console.log(`  ${name}`);
+  }
+}
+
 function showHelp() {
-  console.log(`claunch — Universal agent launcher for Claude Code
+  console.log(`claunch — Universal launcher for Claude Code, Codex, and Pi
 
 Usage:
-  claunch                              Interactive project/agent picker
-  claunch <project>                    List agents for a project
-  claunch <project> <agent> [args...]  Launch an agent in project context
+  claunch                                Interactive harness/agent/dir picker
+  claunch <project>                      List agents for a project (Claude default)
+  claunch <project> <agent> [args...]    Launch Claude with agent in project
+  claunch <harness> <project> [args...]  Launch a specific harness in a project
+                                         <harness> ∈ ${Object.keys(HARNESSES).join(', ')}
 
 Commands:
-  add <name> <dir> [--agents-dir <p>]  Register a project
-  remove <name>                        Unregister a project
-  scan [root-dir]                      Auto-discover projects (uses scan_roots if no arg)
-  list                                 List all projects and agents (non-interactive)
-  init                                 Create default config
-  update                               Update claunch to the latest version
-  completions <zsh|bash|fish>          Print shell completions
+  add <name> <dir> [--agents-dir <p>]    Register a project
+  remove <name>                          Unregister a project
+  scan [root-dir]                        Auto-discover projects
+  list                                   List projects + harnesses
+  init                                   Create default config
+  update                                 Update claunch to the latest version
+  audit [harness]                        Check harnesses for CLI surface drift
+  completions <zsh|bash|fish>            Print shell completions
+
+Examples:
+  claunch                                Pick interactively
+  claunch driffusion cto                 Claude + cto agent in driffusion dir
+  claunch codex driffusion               Codex in driffusion dir (auto bypass + goals)
+  claunch pi thesis                      Pi in thesis dir
+  claunch audit codex                    Check if Codex CLI changed since last ack
 
 Config: ${getConfigPath()}
 `);

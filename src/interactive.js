@@ -5,11 +5,18 @@ import { loadConfig, expandHome } from './config.js';
 import { discoverAgents, resolveAgent } from './discovery.js';
 import { launch } from './launcher.js';
 import { splitPanelSelect } from './tui.js';
+import { verticalPick } from './picker.js';
 import { getScores } from './frecency.js';
+import { listHarnesses, HARNESSES } from './harness.js';
 
 const PLAIN_CLAUDE = '(plain claude)';
 const SKIP_DIRS = new Set(['.git', '.obsidian', 'node_modules', '.venv', '__pycache__', '.planning', '.stfolder', '.claude', 'chroma_db']);
 
+/**
+ * Top-level interactive entry. Two-step:
+ *   1. harness picker (claude/codex/pi)
+ *   2. agent + dir picker (claude) OR dir picker (codex/pi)
+ */
 async function interactivePick() {
   const config = loadConfig();
   const projects = Object.entries(config.projects);
@@ -21,17 +28,45 @@ async function interactivePick() {
     return;
   }
 
+  // Step 1: harness picker
+  const harnessFrecency = getScores('harnesses');
+  const harnessItems = listHarnesses().map(h => ({
+    label: h.label,
+    description: h.description,
+    color: h.color,
+    value: h.name,
+    searchText: `${h.name} ${h.label} ${h.description}`,
+  }));
+
+  const chosenHarness = await verticalPick({
+    title: 'harness',
+    items: harnessItems,
+    maxVisible: harnessItems.length,
+    frecency: harnessFrecency,
+    frecencyKeyFn: (item) => item.value,
+  });
+
+  if (!chosenHarness) return;
+
+  if (chosenHarness === 'claude') {
+    await claudePick(config, projects);
+  } else {
+    await dirOnlyPick(chosenHarness, config, projects);
+  }
+}
+
+/**
+ * Claude flow — preserved from v0.4: agent picker then dir picker via the
+ * animated split-panel TUI.
+ */
+async function claudePick(config, projects) {
   const agentFrecency = getScores('agents');
   const dirFrecency = getScores('directories');
 
   const globalAgentsDir = join(homedir(), '.claude', 'agents');
 
-  // Build flat agent list
   const agentItems = [];
 
-  // Plain claude — global. Include the literal label (with parens) in searchText so users
-  // searching verbatim (e.g. typing "(plain" or "claude") still hit it; keep the rest terse
-  // so the substring-length tiebreaker (1/length) stays favorable.
   agentItems.push({
     label: PLAIN_CLAUDE,
     tag: 'global',
@@ -57,42 +92,36 @@ async function interactivePick() {
     for (const agentName of [...allNames].sort()) {
       const agent = agents.find(a => a.name === agentName);
       const desc = agent?.description || (projectConfig.overrides?.[agentName] ? 'override' : '');
-      const color = agent?.color || null;
+      const colorName = agent?.color || null;
 
       agentItems.push({
         label: agentName,
         tag,
         description: desc,
-        color,
+        color: colorName,
         value: { agentName, sourceProject: projectName, agentDir: agentRootDir, isGlobal },
         searchText: `${tag} ${agentName} ${desc}`,
       });
     }
   }
 
-  // Directory items builder — scoped to agent's declaration level
   function dirItemsFn(agentValue) {
     const { agentDir, isGlobal } = agentValue;
     const dirItems = [];
 
     if (isGlobal || !agentDir) {
-      // Global agents: all registered project dirs + subdirectories
       for (const [projName, projConfig] of projects) {
         const dir = expandHome(projConfig.dir);
         addDirWithChildren(dirItems, projName, dir, 2);
       }
     } else {
-      // Project agent: only dirs at or below the agent's declaration directory
-      // Add the agent's own directory tree
       const parentProject = projects.find(([, p]) => expandHome(p.dir) === agentDir);
       const label = parentProject ? parentProject[0] : basename(agentDir).toLowerCase();
       addDirWithChildren(dirItems, label, agentDir, 3);
 
-      // Also add any registered projects that are children of agentDir
       for (const [projName, projConfig] of projects) {
         const dir = expandHome(projConfig.dir);
         if (dir !== agentDir && dir.startsWith(agentDir + '/')) {
-          // Already covered by walk above, but ensure overrides are included
           if (projConfig.overrides) {
             for (const [, override] of Object.entries(projConfig.overrides)) {
               if (override.dir) {
@@ -107,7 +136,6 @@ async function interactivePick() {
       }
     }
 
-    // Deduplicate
     const seen = new Set();
     return dirItems.filter(item => {
       if (seen.has(item.value.dir)) return false;
@@ -132,17 +160,17 @@ async function interactivePick() {
   const targetDir = dir || expandHome(config.projects[sourceProject]?.dir || '~');
   const agentLabel = agentName || 'plain claude';
 
-  // Clear terminal before launching
   process.stdout.write('\x1b[2J\x1b[H');
   console.log(`\x1b[2m${agentLabel} in ${shortenPath(targetDir)}\x1b[0m`);
 
   if (agentName === null) {
     launch({
+      harness: 'claude',
       dir: targetDir,
       agent: null,
       addDirs: [],
       extraFlags: [],
-      claudeFlags: config.defaults?.claude_flags || [],
+      harnessFlags: config.defaults?.claude_flags || [],
       passthrough: [],
       frecencyKey: PLAIN_CLAUDE,
     });
@@ -150,12 +178,62 @@ async function interactivePick() {
     const sourceConfig = config.projects[sourceProject];
     const resolved = resolveAgent(sourceConfig, agentName);
     launch({
+      harness: 'claude',
       ...resolved,
       dir: targetDir,
-      claudeFlags: config.defaults?.claude_flags || [],
+      harnessFlags: config.defaults?.claude_flags || [],
       passthrough: [],
     });
   }
+}
+
+/**
+ * Codex/Pi flow — single-step dir picker. Skips the agent step entirely
+ * (these harnesses don't expose sub-agents on the CLI).
+ */
+async function dirOnlyPick(harnessName, config, projects) {
+  const harness = HARNESSES[harnessName];
+  const dirFrecency = getScores('directories');
+
+  const dirItems = [];
+  for (const [projName, projConfig] of projects) {
+    const dir = expandHome(projConfig.dir);
+    addDirWithChildren(dirItems, projName, dir, 2);
+  }
+
+  const seen = new Set();
+  const dedupedItems = dirItems.filter(item => {
+    if (seen.has(item.value.dir)) return false;
+    seen.add(item.value.dir);
+    return true;
+  });
+
+  const dirValue = await verticalPick({
+    title: `${harness.label} — directory`,
+    items: dedupedItems,
+    maxVisible: 13,
+    frecency: dirFrecency,
+    frecencyKeyFn: (item) => item.value.dir,
+  });
+
+  if (!dirValue) return;
+
+  const targetDir = dirValue.dir;
+  process.stdout.write('\x1b[2J\x1b[H');
+  console.log(`\x1b[2m${harness.label} in ${shortenPath(targetDir)}\x1b[0m`);
+
+  // Track harness frecency too so the harness picker remembers preferences
+  const { recordAccess } = await import('./frecency.js');
+  recordAccess('harnesses', harnessName);
+
+  const flagsKey = harness.default_flags_key;
+  launch({
+    harness: harnessName,
+    dir: targetDir,
+    harnessFlags: config.defaults?.[flagsKey] || [],
+    passthrough: [],
+    frecencyKey: `(${harnessName})`,
+  });
 }
 
 function addDirWithChildren(items, projectLabel, rootDir, maxDepth) {

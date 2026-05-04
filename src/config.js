@@ -19,17 +19,45 @@ function ensureConfigDir() {
   return dir;
 }
 
+/**
+ * Default config used for fresh installs and missing fields. The harness-flag
+ * lists below match Mauricio's day-to-day defaults; users edit the YAML to
+ * customize per machine.
+ *
+ * NOTE: An EXPLICITLY EMPTY user value (e.g. `codex_flags: []` in
+ * config.yaml) is respected and overrides DEFAULT_DEFAULTS — the merge below
+ * is shallow on purpose. If you want defaults restored, delete the key from
+ * your config rather than setting it to `[]`. This is the intended behavior
+ * but it IS a footgun: setting `codex_flags: []` makes Codex prompt for
+ * approval on every action because `--dangerously-bypass-approvals-and-sandbox`
+ * is no longer auto-injected.
+ */
+const DEFAULT_DEFAULTS = {
+  claude_flags: ['--dangerously-skip-permissions'],
+  codex_flags: ['--dangerously-bypass-approvals-and-sandbox', '--enable', 'goals'],
+  pi_flags: [],
+};
+
 function loadConfig() {
   const path = getConfigPath();
   if (!existsSync(path)) {
-    return { defaults: { claude_flags: [] }, scan_roots: [], projects: {} };
+    return {
+      defaults: { ...DEFAULT_DEFAULTS },
+      scan_roots: [],
+      projects: {},
+      harnesses: {},
+    };
   }
   const raw = readFileSync(path, 'utf8');
   const config = YAML.parse(raw) || {};
+  // Merge missing harness-flag keys against defaults (backward compat for
+  // configs created before v0.5).
+  const defaults = { ...DEFAULT_DEFAULTS, ...(config.defaults || {}) };
   return {
-    defaults: config.defaults || { claude_flags: [] },
+    defaults,
     scan_roots: config.scan_roots || [],
     projects: config.projects || {},
+    harnesses: config.harnesses || {},
   };
 }
 
@@ -48,4 +76,11 @@ function expandHome(p) {
   return p;
 }
 
-export { loadConfig, saveConfig, getConfigDir, getConfigPath, expandHome };
+export {
+  loadConfig,
+  saveConfig,
+  getConfigDir,
+  getConfigPath,
+  expandHome,
+  DEFAULT_DEFAULTS,
+};

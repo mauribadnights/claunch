@@ -1,110 +1,145 @@
 # claunch
 
-**Universal agent launcher for Claude Code.** Manage project-specific agents from anywhere.
+**Universal launcher for Claude Code, Codex, and Pi.** One TUI, every harness, no aliases.
 
 [![npm version](https://img.shields.io/npm/v/@mauribadnights/claunch.svg)](https://www.npmjs.com/package/@mauribadnights/claunch)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
-## Why I Built This
+## Why
 
-I don't know about you, but as I started making different agents for different things, and was simultaneously working on a hundred different projects, I got tired of constantly running long commands to navigate to the directory I want and call the agent I need. At first I fixed it using shell aliases, but that got messy fast and I couldn't keep track of all of them:
+Three coding agents now: Claude Code, OpenAI Codex, Pi. Each one has its own quirks — different bypass flags, different sub-agent stories, different cwd assumptions. Three different launchers means three different muscle-memory paths and three sets of flags I have to remember to type every time.
+
+claunch v0.5 collapses all of them behind one command:
 
 ```bash
-alias claude-cto="cd ~/projects/myapp && claude --agent cto"
-alias claude-designer="cd ~/projects/myapp && claude --agent designer"
-alias claude-devops="cd ~/infra && claude --agent devops"
-# ... 15 more aliases that I'll definitely forget about ...
+$ claunch                # or just `c`
+
+harness > _
+> Claude Code   Anthropic — agents, plan mode, MCP
+  Codex         OpenAI — sandbox+approval gates, feature flags
+  Pi            badlogic/pi-mono — no sub-agents, no sandbox
+3 | type to filter | enter to select | esc to cancel
 ```
 
-So I built a smart fuzzy agent and project picker to get into my projects faster than ever.
+Pick a harness → (if Claude) pick an agent → pick a directory → it launches with all the flags you'd otherwise type by hand.
 
-## The Fix
+## Install
 
 ```bash
 npm install -g @mauribadnights/claunch
 ```
 
-```
-$ claunch
+Adds two binaries to your `$PATH`: `claunch` and `c` (alias).
 
-agent > _                    |  ▐▛███▜▌
-> cto          [myapp]       | ▝▜█████▛▘  hey!
-  designer     [myapp]       |   ▘▘ ▝▝
-  devops       [infra]       |
-  builder      [global]      |   cto
-  (plain claude) [global]    |   Technical architect and
-                             |   engineering lead
-6 | type to filter | enter   |
-```
-
-One command. Split-panel TUI. Fuzzy search. No aliases.
-
-## Quick Start
+## Usage
 
 ```bash
-# Install
-npm install -g @mauribadnights/claunch
+# Interactive: harness → agent (Claude only) → directory
+c
 
-# Register a project (auto-discovers agents from .claude/agents/)
+# Direct, Claude default (backward-compatible with v0.4)
+c myapp                       # list agents
+c myapp cto                   # launch claude --agent cto in myapp/
+
+# Explicit harness
+c claude myapp cto            # same as above
+c codex myapp                 # codex with auto bypass + goals
+c pi myapp                    # pi in myapp/
+
+# Pass extra args through
+c codex myapp "fix the auth bug"
+c pi myapp --model openai-codex/gpt-5.5
+```
+
+## Default flags per harness
+
+claunch auto-injects sane defaults so you never re-type them:
+
+| Harness | Default flags                                                                      |
+| ------- | ---------------------------------------------------------------------------------- |
+| Claude  | `--dangerously-skip-permissions`                                                   |
+| Codex   | `--dangerously-bypass-approvals-and-sandbox --enable goals`                        |
+| Pi      | (none — Pi has no sandbox or sub-agent gates by design)                            |
+
+Customize in `~/.claunch/config.yaml`:
+
+```yaml
+defaults:
+  claude_flags:
+    - --dangerously-skip-permissions
+  codex_flags:
+    - --dangerously-bypass-approvals-and-sandbox
+    - --enable
+    - goals
+  pi_flags: []
+```
+
+> **Footgun:** an explicit empty list (`codex_flags: []`) overrides the defaults — if you remove the bypass flag from Codex this way, Codex will prompt for approval on every action. To restore defaults, remove the key from the file rather than setting it to `[]`.
+
+## Drift detector — never silently break
+
+When Codex or Pi adds a new mode (a `--remote` flag, a non-cwd scoped mode, a new sub-agent system) the launcher abstraction can silently leak — claunch keeps shipping the same flags while the harness has grown new options that bypass it.
+
+claunch v0.5 hashes each harness's `--help` output and compares it to the last acknowledged baseline. When it changes:
+
+```
+⚠ pi CLI surface changed since 2026-05-04.
+  claunch's launcher model may not expose new modes/flags.
+  Possible abstraction leaks (new tokens):
+    + --cwd
+  1 new line(s) in --help. Sample:
+    +   --cwd <dir>     Override working directory
+  Review and acknowledge: `claunch audit pi`
+```
+
+The cache refreshes asynchronously every 24h, so the runtime overhead is one file read + sha256 (~5 ms per launch). Drift fires once per change until you acknowledge with:
+
+```bash
+claunch audit                 # summary of all harnesses
+claunch audit pi              # full diff + interactive acknowledge
+```
+
+Each harness has a list of "leak tokens" — substrings that, when newly appearing in `--help`, signal a likely abstraction leak. For Pi: `--cwd`, `--agent`, `--sandbox`, `--dangerously-*`, `--exec`, `--daemon`. For Codex: `--remote`, `app-server`, `mcp-server`, `cloud`. Tweak in `src/harness.js` if you fork.
+
+## Project registration
+
+claunch tracks projects so you don't type paths:
+
+```bash
 claunch add myapp ~/projects/myapp
 claunch add infra ~/infrastructure
-
-# Or auto-discover everything under a root
-claunch scan ~/projects
-
-# Launch interactively
-claunch
-
-# Or directly
-claunch myapp cto
+claunch scan ~/projects                  # auto-discover under a root
+claunch list                             # show registered projects + harnesses
 ```
 
-## How It Works
-
-claunch reads agent definitions from each project's `.claude/agents/` directory -- the same place Claude Code already looks for agents. No new config format to learn.
+For Claude Code, agents are auto-discovered from each project's `.claude/agents/` directory:
 
 ```
 ~/projects/myapp/
 ├── .claude/
 │   └── agents/
-│       ├── cto.md          <- claunch discovers these
+│       ├── cto.md
 │       ├── designer.md
 │       └── devops.md
-├── src/
-└── ...
 ```
 
-When you run `claunch myapp cto`, it:
-1. `cd`s to `~/projects/myapp/`
-2. Runs `claude --agent cto` (plus any default flags you've configured)
+`claunch myapp cto` then runs `claude --agent cto` in `~/projects/myapp/` with your default flags.
 
-The interactive TUI goes further -- after picking an agent, you get a second panel to pick which directory to launch in, with fuzzy search on both. It tracks what you use most with frecency ranking (Mozilla-style exponential decay, 14-day half-life) so your favorites float to the top over time.
+## Config
 
-## Usage
-
-```
-claunch                              Interactive project/agent picker
-claunch <project>                    List agents for a project
-claunch <project> <agent> [args...]  Launch an agent in project context
-
-claunch add <name> <dir>             Register a project
-claunch remove <name>                Unregister a project
-claunch scan [root-dir]              Auto-discover projects
-claunch list                         List all projects (non-interactive)
-claunch init                         Create default config
-claunch update                       Update claunch to the latest version
-claunch completions <zsh|bash|fish>  Print shell completions
-```
-
-## Configuration
-
-Config lives at `~/.claunch/config.yaml`:
+`~/.claunch/config.yaml`:
 
 ```yaml
 defaults:
-  claude_flags: []  # flags appended to every launch
+  claude_flags:
+    - --dangerously-skip-permissions
+  codex_flags:
+    - --dangerously-bypass-approvals-and-sandbox
+    - --enable
+    - goals
+  pi_flags: []
 
-scan_roots:         # directories for `claunch scan`
+scan_roots:
   - ~/projects
   - ~/work
 
@@ -113,28 +148,45 @@ projects:
     dir: ~/projects/myapp
   infra:
     dir: ~/infrastructure
-    agents_dir: ~/shared-agents  # override agent discovery path
-```
-
-### Agent Overrides
-
-For agents that need a different working directory or extra flags:
-
-```yaml
-projects:
-  myapp:
-    dir: ~/projects/myapp
+    agents_dir: ~/shared-agents      # override Claude agent discovery path
     overrides:
       cto-code:
-        dir: ~/projects/myapp/packages/core  # launch from subdirectory
+        dir: ~/projects/myapp/packages/core
         add_dirs:
-          - ~/projects/myapp/docs            # --add-dir flag
-        agent: cto                           # use the cto agent definition
+          - ~/projects/myapp/docs
+        agent: cto
+
+harnesses:                           # auto-managed by drift detector
+  claude:
+    bin: claude
+    cli_signature_sha: <sha>
+    last_audited: 2026-05-04
 ```
 
-## Shell Completions
+## All commands
 
-Tab-complete project and agent names:
+```
+claunch                                  Interactive picker
+claunch <project>                        List Claude agents (legacy)
+claunch <project> <agent> [args...]      Launch Claude with agent
+claunch <harness> <project> [args...]    Launch a specific harness
+                                         <harness> ∈ claude, codex, pi
+
+claunch add <name> <dir>                 Register a project
+claunch remove <name>                    Unregister a project
+claunch scan [root-dir]                  Auto-discover projects
+claunch list                             Show projects + harnesses
+claunch audit [harness]                  Check for CLI surface drift
+claunch init                             Create default config
+claunch update                           Update to latest version
+claunch completions <zsh|bash|fish>      Print shell completions
+```
+
+## Reserved names
+
+These project names are unreachable as positional args (they collide with subcommands): `list`, `init`, `add`, `remove`, `scan`, `audit`, `update`, `upgrade`, `completions`, `help`. And these are the harness aliases: `claude`, `codex`, `pi`. Don't name a project after them.
+
+## Shell completions
 
 ```bash
 # zsh
@@ -147,10 +199,14 @@ eval "$(claunch completions bash)"
 claunch completions fish > ~/.config/fish/completions/claunch.fish
 ```
 
+Completions also work with the `c` alias.
+
 ## Requirements
 
 - Node.js >= 18
-- [Claude Code](https://claude.ai/code) installed and available as `claude` in PATH
+- At least one of: [Claude Code](https://claude.ai/code), [OpenAI Codex CLI](https://www.npmjs.com/package/@openai/codex), [Pi Coding Agent](https://www.npmjs.com/package/@mariozechner/pi-coding-agent)
+
+claunch silently skips drift detection for harnesses whose binary isn't installed.
 
 ## License
 
